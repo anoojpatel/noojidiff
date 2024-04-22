@@ -1,4 +1,5 @@
 ndiff/
+venv/
 __pycache
 output
 # Byte-compiled / optimized / DLL files
