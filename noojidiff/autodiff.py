@@ -1,11 +1,12 @@
 """This implements a simple Tape based reverse-mode automatic differentiation. We are only going to implement simple operations
 via ADD, MUL, EXPAND and SUM"""
 import numpy as np
-from typing import Optional, NamedTuple, Callable
-
+from typing import Optional, NamedTuple, Callable, List
+from contextlib import contextmanager
 
 Tape = list["TapeEntry"]
 
+tapes: list[Tape] = []
 
 # global name reference
 _name: int = 0
@@ -26,39 +27,59 @@ class Variable:
     @staticmethod
     def constant(value: np.ndarray, name: str=None):
         r = Variable(value, name)
-        print(f'{r.name} = {value}')a
+        print(f'{r.name} = {value}')
         return r
 
     def __repr__(self):
         return repr(self.value)
 
+    def get_tape(self):
 
+        if tapes:
+            return tapes[-1]
+        else:
+            raise KeyError("Gradient Tape not defined in scope. Make sure you use a context manager.")
     # This performs a pointwise multiplication of a Variable, tracking gradients
     def __matmul__(self, rhs: 'Variable') -> 'Variable':
-        return operator_matmul(self, rhs)
+
+        return operator_matmul(self, rhs, self.get_tape())
 
     def __mul__(self, rhs: 'Variable') -> 'Variable':
         # defined later in the notebook
-        return operator_mul(self, rhs)
+        return operator_mul(self, rhs, self.get_tape())
 
     def __add__(self, rhs: 'Variable') -> 'Variable':
-        return operator_add(self, rhs)
+        return operator_add(self, rhs, self.get_tape())
             
     def sum(self, name: Optional[str]=None) -> 'Variable':
-        return operator_sum(self, name)
+        return operator_sum(self, name, self.get_tape())
     
     def expand(self, sizes: list[int]) -> 'Variable':
-        return operator_expand(self, sizes)
+        return operator_expand(self, sizes, self.get_tape())
 
+PrimalVariableInputs = list[str]
+PrimalVariableOutputs = list[str]
+
+TangentOutputs = list[Variable]
+TangentInputs = list[Variable]
 
 class TapeEntry(NamedTuple):
-    # names of the inputs to the original computation
-    inputs : list[str]
-    # names of the outputs of the original computation
-    outputs: list[str]
+    # names of the inputs to the original computation (Primal Inputs)
+    inputs : PrimalVariableInputs
+    # names of the outputs of the original computation (Primal Outputs)
+    outputs: PrimalVariableOutputs
     # apply chain rule
-    propagate: 'Callable[list[Variable], list[Variable]]'
+    propagate: Callable[[TangentOutputs], TangentInputs]
 
+
+@contextmanager
+def tape_context(add_new_tape: bool=False):
+    if add_new_tape:
+        tapes.append(generate_tape())
+    try:
+        yield tapes[-1]
+    finally:
+        reset_tape(tapes[-1]) 
 
 def generate_tape() -> list[TapeEntry]:
     return []
@@ -84,11 +105,12 @@ def operator_mul(self : Variable, rhs: Variable, gradient_tape: Tape) -> Variabl
     # define backprop
     def propagate(dL_doutputs: list[Variable]):
         dL_dr, = dL_doutputs
-    
+        print(dL_dr) 
         dr_dself = rhs # partial derivative of r = self*rhs
         dr_drhs = self # partial derivative of r = self*rhs
 
         # chain rule propagation from outputs to inputs of multiply
+        print("dL_dself = dL_dr * dr_dself -> ", dL_dr, " * ", dr_dself)
         dL_dself = dL_dr * dr_dself
         dL_drhs = dL_dr * dr_drhs
         dL_dinputs = [dL_dself, dL_drhs] 
@@ -99,7 +121,7 @@ def operator_mul(self : Variable, rhs: Variable, gradient_tape: Tape) -> Variabl
 
 def operator_matmul(self : Variable, rhs: Variable, gradient_tape: Tape) -> Variable:
     """
-    We can think of the pullback (vJp rule) as f(A,B)= AB => C
+    We can think of the pullback (vJp rule) as f(Self,Rhs)= Self @ Rhs => C
     Where we want to take the Jacobian of f()
      A 
     """
@@ -109,27 +131,49 @@ def operator_matmul(self : Variable, rhs: Variable, gradient_tape: Tape) -> Vari
 
     # define forward
     C = Variable(self.value @ rhs.value)
-    print(f'{r.name} = {self.name} @ {rhs.name}')
+    print(f'{C.name} = {self.name} @ {rhs.name}')
 
     # record what the inputs and outputs of the op were
     inputs = [self.name, rhs.name]
-    outputs = [r.name]
+    outputs = [C.name]
 
     # define backprop
     def propagate(dL_doutputs: list[Variable]):
         dL_dC, = dL_doutputs
-    
-        dr_dself = rhs # partial derivative of r = self*rhs
-        dr_drhs = self # partial derivative of r = self*rhs
+        print(dL_dC, dL_dC.value.ndim == 0)
+        dC_dself = rhs # partial derivative of r = self*rhs
+        dC_drhs = self # partial derivative of r = self*rhs
 
+        # Check if primal output is a scalar / zero dimmed scalar overload
+        if  C.value.ndim == 0 or np.isscalar(C.value):
+            dL_dC.value = dL_dC.value * np.ones_like(self.value @ rhs.value)
         # chain rule propagation from outputs to inputs of Matrix-matrix * matrix-vector multiplication
-        dL_dself = Variable(dL_dC.value @ dr_dself.value.T) 
-        dL_drhs = Variable(dr_drhs.value.T @ dL_dC.value)
+        print("dL_dself = dL_dC * dr_dself -> ", dL_dC, " @ ", dC_dself)
+
+        # Quite brutal logic to handle casting the right operation for combiantions of primal inputs,
+        # primal outputs, cotangent inputs and outputs dimenisons w.r.t. a matrix mul in the primal
+
+        #Check if cotangent output being pulledback is scalar
+        if dL_dC.value.ndim == 0 or np.isscalar(dL_dC.value):
+            if self.value.ndim <= 1:
+                print(self.value.ndim, "matmul self dim")
+                dL_dself = Variable(dL_dC.value * dC_dself.value)
+            else:
+                dL_dself = Variable(dL_dC.value * (dC_dself.value.T @ np.ones_like(dL_dC.value)))
+
+            if rhs.value.ndim <= 1:
+                print(rhs.value.ndim, "matmul rhs dim")
+                dL_drhs = Variable(dL_dC.value * dC_drhs.value)
+            else:
+                dL_drhs = Variable(dL_dC.value * ( dC_drhs.value.T @ np.ones_like(dL_dC.value))) 
+        else:
+            dL_dself = Variable(dL_dC.value @ dC_dself.value.T) 
+            dL_drhs = Variable(dC_drhs.value.T @ dL_dC.value)
         dL_dinputs = [dL_dself, dL_drhs] 
         return dL_dinputs
     # finally, we record the compute we did on the tape
     gradient_tape.append(TapeEntry(inputs=inputs, outputs=outputs, propagate=propagate))
-    return r
+    return C
 
 
 def operator_add(self : Variable, rhs: Variable, gradient_tape: Tape) -> Variable:
@@ -179,7 +223,7 @@ def grad(L, desired_results: list[Variable], gradient_tape:Tape) -> list[Variabl
     dL_d : dict[str, Variable] = {}
     # It starts by initializing the 'seed' dL/dL, which is 1
     dL_d[L.name] = Variable(np.ones(()))
-    print(f'd{L.name} ------------------------')
+    print(f'd{L.name} {type(L.value)} {L.value.shape if isinstance(L.value,np.ndarray) else ""}------------------------')
 
     # look up dL_dentries. If a variable is never used to compute the loss,
     # we consider its gradient None, see the note below about zeros for more information.
