@@ -159,8 +159,8 @@ def operator_matmul(self : Variable, rhs: Variable, gradient_tape: Tape) -> Vari
     def propagate(dL_doutputs: list[Variable]):
         dL_dC, = dL_doutputs
         print(dL_dC, dL_dC.value.ndim == 0)
-        dC_dself = rhs # partial derivative of r = self*rhs
-        dC_drhs = self # partial derivative of r = self*rhs
+        dC_dself = rhs # partial derivative of C = self*rhs
+        dC_drhs = self # partial derivative of C = self*rhs
 
         # Check if primal output is a scalar / zero dimmed scalar overload
         if  C.value.ndim == 0 or np.isscalar(C.value):
