@@ -296,7 +296,20 @@ def operator_reshape(self: Variable, new_shape: tuple, gradient_tape: Tape) ->'V
     return reshaped
 
 def boxproduct(a, b):
-    return np.kron(np.ones((1, b.shape[1])), np.kron(a, np.ones((b.shape[0], 1)))) * np.kron(np.kron(np.ones((a.shape[0], 1)), b), np.ones((1, a.shape[1])))
+    return np.kron(
+            np.ones(
+                (1, b.shape[1])
+            ), 
+            np.kron(
+                a,
+                np.ones((b.shape[0], 1)),
+            )
+        ) * np.kron(
+                np.kron(
+                        np.ones((a.shape[0], 1)), b
+                    ), 
+                np.ones((1, a.shape[1]))
+            )
 
     
 def operator_transpose(self: Variable, complex: bool, gradient_tape: Tape)-> 'Variable':
