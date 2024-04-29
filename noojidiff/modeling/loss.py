@@ -17,5 +17,5 @@ def nll_loss_backward(dL_dL, L_curr, Z_curr, target):
     """
     dL_dZ = np.zeros_like(Z_curr)
     print(dL_dZ.shape)
-    dL_dZ[target] = -1 * dL_dL * L_curr
+    dL_dZ[target] = -1 * dL_dL #* L_curr
     return dL_dZ

@@ -14,7 +14,7 @@ def create_MLP(input_size: int, depth: int, width: int, class_n: int):
         raise ValueError("Cant have a MLP with depth only 1! You probably mean depth=2, where there is only 1 learnable W matrix")
     elif depth == 2:
         warnings.warn("By specifying depth 2, you will not have a hidden layer! `width` is ignored!")
-        return [[np.sqrt(1/input_size) * np.random.normal(size=(class_n, input_size))]]
+        return [np.sqrt(1/input_size) * np.random.normal(size=(class_n, input_size))]
     return [np.sqrt(1/input_size) * np.random.normal(size=(width, input_size))] + \
         [np.sqrt(1/width) * np.random.normal(size=(width,width)) for _ in range(depth-2)] + \
         [np.sqrt(1/width) * np.random.normal(size=(class_n, width))]
